@@ -60,6 +60,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_open_event
     ON delay_events (airport, delay_type, COALESCE(direction, ''))
     WHERE ended_at IS NULL;
 
+-- Natural key for CLOSED events: refresh_events() recomputes over a rolling
+-- lookback window on every ingestion run, so a closed event already stored
+-- from a prior run must dedupe on replay rather than duplicate.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_closed_event
+    ON delay_events (airport, delay_type, COALESCE(direction, ''), started_at)
+    WHERE ended_at IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_events_airport
     ON delay_events (airport, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_anomaly
