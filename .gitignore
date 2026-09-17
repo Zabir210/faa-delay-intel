@@ -7,3 +7,8 @@ node_modules/
 .next/
 .neon
 .env.local
+
+# dashboard (Next.js)
+dashboard/.next/
+dashboard/node_modules/
+dashboard/.env.local
