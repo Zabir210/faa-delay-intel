@@ -17,7 +17,10 @@ DSN = os.environ.get("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL not set")
 
 SCHEMA = (Path(__file__).parent.parent / "db" / "schema.sql").read_text()
-T0 = datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc)
+# Must stay within refresh_events' 24h lookback window relative to whenever
+# the suite actually runs — a fixed calendar date drifts out of range and
+# silently zeroes every event (see 2026-09-17 CI failure).
+T0 = datetime.now(timezone.utc) - timedelta(hours=1)
 
 
 @pytest.fixture()
