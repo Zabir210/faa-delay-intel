@@ -2,8 +2,14 @@ name: ingest
 
 on:
   schedule:
-    # Every 5 minutes. GitHub Actions cron is best-effort and can be delayed
-    # or skipped under load — ingestion is idempotent, so drift is harmless.
+    # Kept as a low-cost fallback only. Measured reliability of this
+    # trigger alone: ~7 runs in 22.4h against a declared */5 * * * *
+    # cron (avg gap 224min, worst 304min) — GitHub Actions' `schedule`
+    # event runs on a shared best-effort queue, not a dedicated timer.
+    # Primary scheduling is now a Cloudflare Worker Cron Trigger (see
+    # ../../worker/) that calls workflow_dispatch below on a reliable
+    # clock. Ingestion is idempotent, so if this fallback ALSO fires,
+    # it's a harmless no-op — see DEPLOY.md.
     - cron: "*/5 * * * *"
   workflow_dispatch:
 

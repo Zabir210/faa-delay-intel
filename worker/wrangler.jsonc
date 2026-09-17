@@ -1,0 +1,22 @@
+{
+  // Reliable scheduler for FAA ingestion. GitHub Actions' `schedule` event
+  // runs on a shared best-effort queue and was measured delivering ~7
+  // runs in 22.4 hours against a declared */5 * * * * cron (avg gap 224
+  // minutes, worst gap 304 minutes) — GitHub's own docs and multiple
+  // independent 2026 reports confirm this is systemic, not a fluke.
+  //
+  // This Worker does ONE thing: fire reliably on Cloudflare's own Cron
+  // Trigger scheduler (not shared/best-effort) and POST a
+  // workflow_dispatch to GitHub, which starts the EXISTING, unmodified,
+  // 43-test-covered Python ingestion pipeline. No ingestion logic lives
+  // here — this only fixes the unreliable clock.
+  "name": "faa-delay-intel-scheduler",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-16",
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+  "observability": {
+    "enabled": true
+  }
+}
