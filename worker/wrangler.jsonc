@@ -14,7 +14,12 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-16",
   "triggers": {
-    "crons": ["*/5 * * * *"]
+    // PAUSED 2026-09-28: GitHub account locked for a billing issue, every
+    // dispatched run was failing in ~2s before running any code (28
+    // failures observed). Disabled here instead of leaving it to fail
+    // repeatedly. Re-add "*/5 * * * *" and redeploy once the account is
+    // unlocked and a manual dispatch succeeds.
+    "crons": []
   },
   "observability": {
     "enabled": true

@@ -1,16 +1,14 @@
 name: ingest
 
 on:
-  schedule:
-    # Kept as a low-cost fallback only. Measured reliability of this
-    # trigger alone: ~7 runs in 22.4h against a declared */5 * * * *
-    # cron (avg gap 224min, worst 304min) — GitHub Actions' `schedule`
-    # event runs on a shared best-effort queue, not a dedicated timer.
-    # Primary scheduling is now a Cloudflare Worker Cron Trigger (see
-    # ../../worker/) that calls workflow_dispatch below on a reliable
-    # clock. Ingestion is idempotent, so if this fallback ALSO fires,
-    # it's a harmless no-op — see DEPLOY.md.
-    - cron: "*/5 * * * *"
+  # PAUSED 2026-09-28: GitHub account locked for a billing issue — every
+  # dispatched run fails in ~2s before any code runs. Schedule trigger
+  # commented out so nothing keeps hitting the locked account. The
+  # Cloudflare Worker cron (../../worker/) is also paused (crons: []).
+  # Re-enable both once the account is unlocked and a manual
+  # workflow_dispatch succeeds.
+  # schedule:
+  #   - cron: "*/5 * * * *"
   workflow_dispatch:
 
 concurrency:
