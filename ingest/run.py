@@ -9,6 +9,7 @@ import time
 import psycopg
 from dotenv import load_dotenv
 
+from detect.anomaly import score_and_persist_anomalies
 from detect.persist import refresh_events
 from ingest.fetch import fetch_nas_status
 from ingest.loader import load_observations, log_run
@@ -58,9 +59,21 @@ def _run_once(dsn, started):
             print(f"warning: event refresh failed: {type(exc).__name__}: {exc}",
                   file=sys.stderr)
 
+        # Anomaly scoring is likewise best-effort and runs after events are
+        # refreshed. A failure here must never fail the ingestion run.
+        anomalies_flagged = 0
+        try:
+            summary = score_and_persist_anomalies(conn)
+            anomalies_flagged = summary["flagged"]
+        except Exception as exc:
+            conn.rollback()
+            print(f"warning: anomaly scoring failed: {type(exc).__name__}: {exc}",
+                  file=sys.stderr)
+
         duration_ms = int((time.monotonic() - started) * 1000)
         log_run(conn, "ok", len(records), new, update_time, None, duration_ms)
         print(f"ok: {len(records)} seen, {new} new, {events_touched} events, "
+              f"{anomalies_flagged} anomalies, "
               f"feed={update_time.isoformat()}, {duration_ms}ms")
         return 0
     finally:

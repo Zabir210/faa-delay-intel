@@ -1,0 +1,29 @@
+name: quality
+
+on:
+  # PAUSED 2026-09-28: matches ingest.yml — GitHub account billing lock
+  # means scheduled/dispatched runs fail before checkout. Re-enable the
+  # schedule once the account is unlocked and a manual workflow_dispatch
+  # succeeds.
+  # schedule:
+  #   - cron: "0 13 * * *"   # once daily; ingestion/anomaly cadence is separate
+  workflow_dispatch:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Data quality checks (read-only, against production)
+        run: python -m pytest tests/test_data_quality.py -v
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
