@@ -4,11 +4,20 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --test test/pipeline.test.ts"
   },
   "devDependencies": {
-    "wrangler": "^4.133.0",
     "@cloudflare/workers-types": "latest",
-    "typescript": "^5.7.2"
-  }
+    "@types/node": "^26.6.4",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1",
+    "typescript": "^5.7.2",
+    "wrangler": "^4.133.0"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.2.0"
+  },
+  "type": "module"
 }

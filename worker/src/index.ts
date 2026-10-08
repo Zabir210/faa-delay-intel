@@ -1,75 +1,121 @@
 /**
- * Reliable alarm clock for FAA ingestion.
+ * FAA delay ingestion, running entirely on Cloudflare Workers.
  *
- * Fires on Cloudflare's Cron Trigger scheduler (not GitHub Actions'
- * shared/best-effort `schedule` queue) and dispatches the existing
- * `ingest.yml` workflow via the GitHub REST API's workflow_dispatch
- * event. All parsing/loading logic stays in the tested Python pipeline —
- * this Worker contains no ingestion logic, only the trigger.
+ * The Cron Trigger calls the full pipeline (fetch -> parse -> load ->
+ * events -> anomalies -> ingest_runs) and writes to Neon over the
+ * serverless driver's WebSocket client (needed for real transactions).
+ * GitHub Actions is no longer in the ingestion path.
+ *
+ * HTTP:
+ *   GET  /        -> JSON health: latest ingest_runs row (read-only)
+ *   POST /run     -> run one ingestion now; requires
+ *                    `Authorization: Bearer <TRIGGER_TOKEN>` and is disabled
+ *                    unless the TRIGGER_TOKEN secret is set.
  */
+import { Client } from "@neondatabase/serverless";
+import { runIngest, type Db, type RunSummary } from "./pipeline.ts";
 
 export interface Env {
-  GITHUB_TOKEN: string;
+  DATABASE_URL: string;
+  TRIGGER_TOKEN?: string;
 }
 
-const OWNER = "Zabir210";
-const REPO = "faa-delay-intel";
-const WORKFLOW_FILE = "ingest.yml";
-const REF = "main";
-
-async function dispatchIngest(env: Env): Promise<Response> {
-  const url =
-    `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/` +
-    `${WORKFLOW_FILE}/dispatches`;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.GITHUB_TOKEN}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "faa-delay-intel-scheduler-worker",
-    },
-    body: JSON.stringify({ ref: REF }),
+/** Rejects after `ms` so a stuck socket can never hang the invocation. */
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const t = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`TimeoutError: ${what} exceeded ${ms}ms`)), ms);
   });
+  return Promise.race([p, t]).finally(() => clearTimeout(timer));
+}
 
-  if (!response.ok) {
-    const body = await response.text();
-    // Surface loudly: a failed dispatch here means a real gap in the
-    // dataset, same as a failed ingest run would.
-    throw new Error(
-      `GitHub dispatch failed: ${response.status} ${response.statusText} — ${body}`
-    );
+function connector(env: Env) {
+  return async (): Promise<Db & { end: () => Promise<void> }> => {
+    if (!env.DATABASE_URL) throw new Error("ConfigError: DATABASE_URL secret is not set");
+    const client = new Client(env.DATABASE_URL);
+    // An unhandled 'error' event would crash the invocation; log it instead.
+    // After an intentional end(), Workers tears down the WebSocket when the
+    // request finishes and the client emits a late "Network connection
+    // lost" — expected, so it is not logged as an error.
+    let closing = false;
+    client.on("error", (err) => {
+      if (!closing) console.error("db client error", err);
+    });
+    // end() on a client whose connect() failed never resolves, so closing is
+    // fire-and-forget with a bound — never awaited unbounded.
+    const close = () => {
+      closing = true;
+      return withTimeout(client.end(), 5_000, "db close").catch(() => {});
+    };
+    try {
+      await withTimeout(client.connect(), 15_000, "db connect");
+    } catch (err) {
+      void close();
+      throw err;
+    }
+    return {
+      query: (text: string, params?: unknown[]) =>
+        withTimeout(client.query(text, params as any[]), 60_000, "db query"),
+      end: close,
+    };
+  };
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  const ea = new TextEncoder().encode(a);
+  const eb = new TextEncoder().encode(b);
+  let diff = ea.length ^ eb.length;
+  for (let i = 0; i < Math.max(ea.length, eb.length); i++) {
+    diff |= (ea[i] ?? 0) ^ (eb[i] ?? 0);
   }
+  return diff === 0;
+}
 
-  return response;
+async function run(env: Env): Promise<RunSummary> {
+  return runIngest({ connect: connector(env) });
 }
 
 export default {
-  async scheduled(
-    _controller: ScheduledController,
-    env: Env,
-    ctx: ExecutionContext
-  ): Promise<void> {
-    ctx.waitUntil(
-      dispatchIngest(env)
-        .then(() => console.log("dispatched ingest.yml"))
-        .catch((err) => {
-          console.error("dispatch failed", err);
-          throw err; // non-2xx scheduled invocation shows as an error in Cloudflare logs
-        })
-    );
+  async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext) {
+    const summary = await run(env);
+    if (summary.status !== "ok") {
+      // Marks the invocation failed in Cloudflare observability (the old
+      // "red CI run" signal). The failure is already in ingest_runs.
+      throw new Error(`ingest failed: ${summary.error}`);
+    }
   },
 
-  // Manual trigger for testing: `curl https://<worker>.workers.dev/`
-  async fetch(_request: Request, env: Env): Promise<Response> {
-    try {
-      await dispatchIngest(env);
-      return new Response("dispatched ingest.yml\n", { status: 200 });
-    } catch (err) {
-      return new Response(`error: ${(err as Error).message}\n`, {
-        status: 502,
-      });
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (url.pathname === "/run") {
+      if (request.method !== "POST") return new Response("method not allowed\n", { status: 405 });
+      const expected = env.TRIGGER_TOKEN;
+      const got = (request.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+      if (!expected || !timingSafeEqual(got, expected)) {
+        return new Response("unauthorized\n", { status: 401 });
+      }
+      const summary = await run(env);
+      return Response.json(summary, { status: summary.status === "ok" ? 200 : 502 });
     }
+
+    if (url.pathname === "/" && request.method === "GET") {
+      try {
+        const db = await connector(env)();
+        try {
+          const res = await db.query(
+            "SELECT ran_at, status, records_seen, records_new, feed_update_time, " +
+              "duration_ms, error FROM ingest_runs ORDER BY ran_at DESC LIMIT 1"
+          );
+          return Response.json({ service: "faa-delay-intel-ingest", last_run: res.rows[0] ?? null });
+        } finally {
+          await db.end().catch(() => {});
+        }
+      } catch (err) {
+        return Response.json({ error: (err as Error).message }, { status: 503 });
+      }
+    }
+
+    return new Response("not found\n", { status: 404 });
   },
 };

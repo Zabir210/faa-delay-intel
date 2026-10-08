@@ -16,3 +16,7 @@ dashboard/.env.local
 # cloudflare worker
 worker/node_modules/
 worker/.wrangler/
+
+# wrangler local secrets
+worker/.dev.vars
+.worker-trigger-token

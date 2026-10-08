@@ -1,25 +1,20 @@
 {
-  // Reliable scheduler for FAA ingestion. GitHub Actions' `schedule` event
-  // runs on a shared best-effort queue and was measured delivering ~7
-  // runs in 22.4 hours against a declared */5 * * * * cron (avg gap 224
-  // minutes, worst gap 304 minutes) — GitHub's own docs and multiple
-  // independent 2026 reports confirm this is systemic, not a fluke.
+  // FAA delay ingestion — the whole pipeline runs here (no GitHub Actions).
+  // Cloudflare's Cron Trigger fires every 5 minutes and the Worker fetches the
+  // FAA NAS feed, parses it, writes observations to Neon, refreshes
+  // delay_events, rescores anomalies, and logs ingest_runs.
   //
-  // This Worker does ONE thing: fire reliably on Cloudflare's own Cron
-  // Trigger scheduler (not shared/best-effort) and POST a
-  // workflow_dispatch to GitHub, which starts the EXISTING, unmodified,
-  // 43-test-covered Python ingestion pipeline. No ingestion logic lives
-  // here — this only fixes the unreliable clock.
+  // Name kept from the earlier relay version so the deploy replaces it in
+  // place (no orphaned Worker still trying to dispatch GitHub workflows).
+  //
+  // Secrets (set with `npx wrangler secret put <NAME>`, never committed):
+  //   DATABASE_URL   Neon connection string (production branch)
+  //   TRIGGER_TOKEN  optional; enables authenticated POST /run
   "name": "faa-delay-intel-scheduler",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-16",
   "triggers": {
-    // PAUSED 2026-09-28: GitHub account locked for a billing issue, every
-    // dispatched run was failing in ~2s before running any code (28
-    // failures observed). Disabled here instead of leaving it to fail
-    // repeatedly. Re-add "*/5 * * * *" and redeploy once the account is
-    // unlocked and a manual dispatch succeeds.
-    "crons": []
+    "crons": ["*/5 * * * *"]
   },
   "observability": {
     "enabled": true

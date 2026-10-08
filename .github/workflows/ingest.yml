@@ -1,14 +1,11 @@
 name: ingest
 
 on:
-  # PAUSED 2026-09-28: GitHub account locked for a billing issue — every
-  # dispatched run fails in ~2s before any code runs. Schedule trigger
-  # commented out so nothing keeps hitting the locked account. The
-  # Cloudflare Worker cron (../../worker/) is also paused (crons: []).
-  # Re-enable both once the account is unlocked and a manual
-  # workflow_dispatch succeeds.
-  # schedule:
-  #   - cron: "*/5 * * * *"
+  # RETIRED 2026-10-08: ingestion now runs entirely in the Cloudflare Worker
+  # (worker/src/), every 5 minutes, writing straight to Neon. This workflow
+  # is kept only as a manual fallback (`gh workflow run ingest.yml`) and has
+  # no schedule. Do not re-add a schedule: two writers would race on
+  # delay_events (the Worker serialises with advisory locks; this doesn't).
   workflow_dispatch:
 
 concurrency:
