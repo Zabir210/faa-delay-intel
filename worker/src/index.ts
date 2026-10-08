@@ -18,6 +18,7 @@ import { runIngest, type Db, type RunSummary } from "./pipeline.ts";
 export interface Env {
   DATABASE_URL: string;
   TRIGGER_TOKEN?: string;
+  SELF_URL?: string;
 }
 
 /** Rejects after `ms` so a stuck socket can never hang the invocation. */
@@ -77,7 +78,28 @@ async function run(env: Env): Promise<RunSummary> {
 
 export default {
   async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext) {
-    const summary = await run(env);
+    // Cron invocations run in an arbitrary Cloudflare location (observed:
+    // Mumbai), and the FAA feed answers 403 to non-US egress. Placement
+    // only applies to HTTP requests, so the cron re-enters the Worker over
+    // HTTP and the run executes at the pinned US placement. If that hop
+    // itself fails, run inline (idempotent + advisory-locked, so a
+    // duplicate run is harmless).
+    let summary: RunSummary | null = null;
+    if (env.SELF_URL && env.TRIGGER_TOKEN) {
+      try {
+        const res = await fetch(new URL("/run", env.SELF_URL), {
+          method: "POST",
+          headers: { Authorization: `Bearer ${env.TRIGGER_TOKEN}` },
+          signal: AbortSignal.timeout(120_000),
+        });
+        const body = (await res.json()) as RunSummary;
+        if (typeof body?.status === "string") summary = body;
+        console.log(`placed run via ${res.headers.get("cf-placement") ?? "?"}: ${body.status}`);
+      } catch (err) {
+        console.warn(`placed run unavailable (${(err as Error).message}); running inline`);
+      }
+    }
+    summary ??= await run(env);
     if (summary.status !== "ok") {
       // Marks the invocation failed in Cloudflare observability (the old
       // "red CI run" signal). The failure is already in ingest_runs.

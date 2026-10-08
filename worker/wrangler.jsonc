@@ -13,8 +13,20 @@
   "name": "faa-delay-intel-scheduler",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-16",
+  // Lets the cron handler call this Worker's own public URL (a normal
+  // internet request, so placement applies) instead of erroring with 1042.
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "vars": {
+    "SELF_URL": "https://faa-delay-intel-scheduler.zabir1.workers.dev"
+  },
   "triggers": {
     "crons": ["*/5 * * * *"]
+  },
+  // Run near Neon (us-east-2) and always inside the US: cron invocations
+  // otherwise execute in arbitrary Cloudflare locations, and the FAA feed
+  // returned 403 to some of them.
+  "placement": {
+    "region": "aws:us-east-2"
   },
   "observability": {
     "enabled": true

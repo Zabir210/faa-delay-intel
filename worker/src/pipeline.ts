@@ -58,6 +58,20 @@ function errText(err: unknown): string {
 // ---------------------------------------------------------------------------
 // fetch (ingest/fetch.py)
 // ---------------------------------------------------------------------------
+
+/** Cloudflare colo + country of this execution, for diagnosing blocked egress. */
+async function whereAmI(): Promise<string> {
+  try {
+    const r = await fetch("https://www.cloudflare.com/cdn-cgi/trace", {
+      signal: AbortSignal.timeout(3_000),
+    });
+    const t = await r.text();
+    const get = (k: string) => new RegExp(`^${k}=(.*)$`, "m").exec(t)?.[1] ?? "?";
+    return `colo=${get("colo")} loc=${get("loc")}`;
+  } catch {
+    return "colo=unknown";
+  }
+}
 export async function fetchNasStatus(
   attempts = 3,
   sleep: (ms: number) => Promise<void> = defaultSleep
@@ -71,7 +85,11 @@ export async function fetchNasStatus(
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       const body = await res.text();
-      if (!res.ok) throw new Error(`HTTPStatusError: ${res.status} ${res.statusText} for ${FEED_URL}`);
+      if (!res.ok) {
+        throw new Error(
+          `HTTPStatusError: ${res.status} ${res.statusText} for ${FEED_URL} [${await whereAmI()}]`
+        );
+      }
       if (!body.trim()) throw new Error("ValueError: FAA feed returned an empty body");
       return body;
     } catch (err) {
