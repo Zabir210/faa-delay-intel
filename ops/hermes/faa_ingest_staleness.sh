@@ -34,7 +34,7 @@ fi
 
 BODY="$BODY" CODE="$CODE" STATE_FILE="$STATE_FILE" HEALTH_URL="$HEALTH_URL" \
 python3 -I - <<'PY'
-import json, os, time
+import json, os, re, time
 from datetime import datetime
 
 STALE_S, REMIND_S = 1800, 7200
@@ -55,8 +55,13 @@ def fmt_age(s):
 
 problem, unreachable = None, False
 try:
-    if os.environ["CODE"] != "200":
-        raise ValueError(f"HTTP {os.environ['CODE']}: {os.environ['BODY'][:200]}")
+    code = os.environ["CODE"]
+    if code == "000":
+        raise ConnectionError("no HTTP response (connection refused, DNS, TLS or 25s timeout)")
+    if code != "200":
+        # Strip tags: an HTML error page would flip Hermes' Telegram send to HTML mode.
+        body = " ".join(re.sub(r"<[^>]*>", " ", os.environ["BODY"]).split())
+        raise ValueError(f"HTTP {code}: {body[:200]}")
     h = json.loads(os.environ["BODY"])
     last = h.get("last_run") or {}
     if "healthy" not in h:

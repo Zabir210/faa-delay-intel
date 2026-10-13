@@ -39,4 +39,5 @@ printf '{"service":"x","last_run":{"ran_at":"2025-10-12T23:58:00Z","status":"ok"
 unreach() { local out; out="$(NOW=$1 HEALTH_URL=http://127.0.0.1:9/ bash "$W")"; echo "$out"; }
 o="$(unreach $T0)"; [ -z "$o" ] && echo "ok   - one unreachable check is silent" || { echo "FAIL - unreachable 1: [$o]"; fail=1; }
 o="$(unreach $((T0+600)))"; [[ "$o" =~ "unreachable" ]] && echo "ok   - second consecutive unreachable alerts" || { echo "FAIL - unreachable 2: [$o]"; fail=1; }
+[[ "$o" =~ "no HTTP response" ]] && echo "ok   - curl code 000 is explained" || { echo "FAIL - 000 text: [$o]"; fail=1; }
 exit $fail
