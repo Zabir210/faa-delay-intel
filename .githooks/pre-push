@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# pre-push: run scripts/check.sh against the exact commit(s) being pushed,
+# checked out in a temporary worktree, so uncommitted edits can never make a
+# push pass. Enable once per clone:  git config core.hooksPath .githooks
+# Emergency skip:  git push --no-verify
+set -euo pipefail
+
+REPO="$(git rev-parse --show-toplevel)"
+ZERO="0000000000000000000000000000000000000000"
+shas=()
+while read -r _lref lsha _rref _rsha; do
+  [ "$lsha" = "$ZERO" ] && continue            # branch deletion: nothing to test
+  [[ " ${shas[*]-} " == *" $lsha "* ]] || shas+=("$lsha")
+done
+[ "${#shas[@]}" -eq 0 ] && exit 0
+
+for sha in "${shas[@]}"; do
+  WT="$(mktemp -d "${TMPDIR:-/tmp}/faa-prepush.XXXXXX")"
+  trap 'git -C "$REPO" worktree remove --force "$WT" >/dev/null 2>&1 || rm -rf "$WT"' EXIT
+  git -C "$REPO" worktree add --detach -q "$WT" "$sha"
+  echo "pre-push: testing $(git -C "$REPO" log -1 --format='%h %s' "$sha")"
+  if ! bash "$WT/scripts/check.sh" "$WT"; then
+    echo "pre-push: checks FAILED for ${sha:0:7}; push aborted (git push --no-verify to override)" >&2
+    exit 1
+  fi
+  git -C "$REPO" worktree remove --force "$WT"
+  trap - EXIT
+done
