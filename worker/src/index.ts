@@ -7,12 +7,15 @@
  * GitHub Actions is no longer in the ingestion path.
  *
  * HTTP:
- *   GET  /        -> JSON health: latest ingest_runs row (read-only)
+ *   GET  /        -> JSON health (read-only): latest ingest_runs row plus
+ *                    healthy / stale (no run in 30 min) / failing (no ok
+ *                    run in 30 min); see health.ts
  *   POST /run     -> run one ingestion now; requires
  *                    `Authorization: Bearer <TRIGGER_TOKEN>` and is disabled
  *                    unless the TRIGGER_TOKEN secret is set.
  */
 import { Client } from "@neondatabase/serverless";
+import { healthBody } from "./health.ts";
 import { runIngest, type Db, type RunSummary } from "./pipeline.ts";
 
 export interface Env {
@@ -129,7 +132,12 @@ export default {
             "SELECT ran_at, status, records_seen, records_new, feed_update_time, " +
               "duration_ms, error FROM ingest_runs ORDER BY ran_at DESC LIMIT 1"
           );
-          return Response.json({ service: "faa-delay-intel-ingest", last_run: res.rows[0] ?? null });
+          // ORDER BY ... LIMIT 1 (not max()) so idx_runs_time stops at the
+          // first ok row instead of aggregating the whole table.
+          const ok = await db.query(
+            "SELECT ran_at FROM ingest_runs WHERE status = 'ok' ORDER BY ran_at DESC LIMIT 1"
+          );
+          return Response.json(healthBody(res.rows[0] ?? null, ok.rows[0]?.ran_at ?? null));
         } finally {
           await db.end().catch(() => {});
         }

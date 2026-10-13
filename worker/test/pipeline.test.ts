@@ -9,6 +9,7 @@ import { test } from "node:test";
 import pg from "pg";
 import { deriveEvents, OUTAGE_GAP_MS, type EventObservation } from "../src/events.ts";
 import { parseDurationMinutes, parseNasStatus } from "../src/parser.ts";
+import { healthBody, STALE_AFTER_S } from "../src/health.ts";
 import { loadObservations, refreshEvents, runIngest, type Deps } from "../src/pipeline.ts";
 
 const REPO = join(import.meta.dirname, "..", "..");
@@ -280,4 +281,62 @@ dbTest("mid-run connection drop: whole cycle retried on a fresh connection", asy
   } finally {
     await c.end();
   }
+});
+
+// --------------------------------------------------------------------------
+// every invocation leaves a row; staleness is what catches the rest
+// --------------------------------------------------------------------------
+test("feed failure is recorded even when the logging connect drops once", async () => {
+  // No local Postgres needed: a fake Db records the queries it receives.
+  const logged: unknown[][] = [];
+  let connects = 0;
+  const s = await runIngest({
+    connect: async () => {
+      connects++;
+      // Attempts 1-3 are the ingest cycle; 4 is the first error-log connect.
+      if (connects === 4) throw new Error("ECONNRESET");
+      return {
+        query: async (t: string, p?: unknown[]) => {
+          if (t.includes("INSERT INTO ingest_runs")) logged.push(p ?? []);
+          return { rows: [], rowCount: 0 };
+        },
+        end: async () => {},
+      };
+    },
+    fetchXml: async () => { throw new Error("HTTPStatusError: 403 Forbidden"); },
+    sleep: async () => {},
+    log: () => {},
+    warn: () => {},
+  });
+  assert.equal(s.status, "error");
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0][0], "error");
+  assert.match(String(logged[0][4]), /403 Forbidden/);
+});
+
+test("health: stale = no run at all in 30 min; failing = runs but none ok", () => {
+  const now = new Date("2026-10-12T12:00:00Z");
+  const ago = (s: number) => new Date(now.getTime() - s * 1000);
+  const run = (s: number, status = "ok") => ({
+    ran_at: ago(s), status, records_seen: 1, records_new: 0,
+    feed_update_time: null, duration_ms: 1, error: null,
+  });
+  const h = (r: ReturnType<typeof run> | null, ok: Date | null) => healthBody(r, ok, now);
+
+  assert.deepEqual(
+    (({ healthy, stale, failing, age_seconds }) => ({ healthy, stale, failing, age_seconds }))(
+      h(run(300), ago(300))),
+    { healthy: true, stale: false, failing: false, age_seconds: 300 });
+  assert.equal(h(run(STALE_AFTER_S), ago(STALE_AFTER_S)).healthy, true);
+  // Cron silent (the 2026-09-28..10-07 gap).
+  assert.equal(h(run(STALE_AFTER_S + 1), ago(STALE_AFTER_S + 1)).stale, true);
+  assert.equal(h(run(STALE_AFTER_S + 1), ago(STALE_AFTER_S + 1)).failing, false);
+  assert.equal(h(null, null).stale, true);
+  assert.equal(h(null, null).healthy, false);
+  // One transient error is fine; every run erroring for 30 min is not
+  // (the 2026-10-08 403s kept ran_at fresh).
+  assert.equal(h(run(60, "error"), ago(360)).healthy, true);
+  assert.equal(h(run(60, "error"), ago(STALE_AFTER_S + 1)).failing, true);
+  assert.equal(h(run(60, "error"), null).failing, true);
+  assert.equal(h(run(60, "error"), null).healthy, false);
 });
