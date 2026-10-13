@@ -10,7 +10,7 @@
 #   1. worker typecheck            (tsc --noEmit)
 #   2. worker tests incl. DB tests  (node --test, throwaway Postgres)
 #   3. Python tests incl. DB tests  (pytest tests/, same Postgres)
-#   4. Hermes watchdog scenarios    (ops/hermes/test_faa_ingest_staleness.sh)
+#   4. Hermes job scenarios         (ops/hermes/test_*.sh)
 # tests/test_data_quality.py is excluded: it reads PRODUCTION, never from a hook.
 #
 # Needs Docker running. Exits non-zero on any failure.
@@ -72,5 +72,7 @@ step "python tests (DB on :$PORT)"
 step "hermes watchdog scenarios"
 run_quiet '^FAIL' bash "$TREE/ops/hermes/test_faa_ingest_staleness.sh"
 echo "watchdog scenarios: all ok"
+run_quiet '^FAIL' bash "$TREE/ops/hermes/test_faa_quality_daily.sh"
+echo "quality-daily scenarios: all ok"
 
 printf '\ncheck: all suites passed\n'
