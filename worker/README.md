@@ -22,3 +22,18 @@ node scripts/rebuild-events.ts "$DATABASE_URL"   # dry run; --apply to commit
 
 Parity harness (local Docker only): `test/parity_py.py`, `test/parity_ts.ts`,
 `test/replay_verify.sh`.
+
+## Test gate (replaces GitHub Actions CI)
+
+GitHub Actions can't start jobs while the account is billing-locked, so tests
+run locally on every `git push` via `.githooks/pre-push`. It checks out the exact
+commit being pushed in a temporary worktree and runs `scripts/check.sh`: worker
+typecheck, worker and Python tests against a throwaway Postgres container, and
+the Hermes watchdog scenarios (about 11s, Docker required).
+
+```bash
+git config core.hooksPath .githooks   # once per clone
+bash scripts/check.sh                 # run the same gate by hand
+git push --no-verify                  # emergency skip
+```
+
