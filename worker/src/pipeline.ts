@@ -578,14 +578,18 @@ export async function runIngest(deps: Deps): Promise<RunSummary> {
   const durationMs = Math.round(Date.now() - started);
   const message = errText(last);
   try {
-    const db = await deps.connect();
+    // Retried like the main connect: a failed run that leaves no row is
+    // indistinguishable from a cron that never fired.
+    const db = await connectWithRetry(deps, sleep);
     try {
       await logRun(db, "error", 0, 0, null, message, durationMs);
     } finally {
       await db.end().catch(() => {});
     }
-  } catch {
-    // logging the failure must not mask the original failure
+  } catch (err) {
+    // Logging the failure must not mask the original failure. The DB is
+    // unreachable, so only the external staleness watchdog can see this.
+    console.error(`error run NOT recorded in ingest_runs: ${errText(err)}`);
   }
   console.error(`error: ${message}`);
   return {
