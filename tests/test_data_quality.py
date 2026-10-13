@@ -18,6 +18,7 @@ DSN = os.environ.get("DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DSN, reason="DATABASE_URL not set")
 
 from detect.data_quality import (  # noqa: E402
+    check_ingest_runs_mostly_ok,
     check_ingest_runs_recent,
     check_no_delay_events_natural_key_dupes,
     check_no_duplicate_natural_keys,
@@ -51,6 +52,14 @@ def test_no_airport_code_over_4_chars(conn):
 
 def test_no_duplicate_delay_events_natural_keys(conn):
     ok, detail = check_no_delay_events_natural_key_dupes(conn)
+    assert ok, detail
+
+
+def test_ingest_runs_mostly_ok(conn):
+    """>= 90% of the last 24h of runs succeeded. Catches a pipeline that is
+    alive (rows keep landing, so the staleness watchdog stays quiet) but
+    degrading, e.g. intermittent FAA 403s or DB timeouts."""
+    ok, detail = check_ingest_runs_mostly_ok(conn)
     assert ok, detail
 
 
