@@ -9,7 +9,7 @@
  * HTTP:
  *   GET  /        -> JSON health (read-only): latest ingest_runs row plus
  *                    healthy / stale (no run in 30 min) / failing (no ok
- *                    run in 30 min); see health.ts
+ *                    run in 30 min); see health.ts. CORS: any origin.
  *   POST /run     -> run one ingestion now; requires
  *                    `Authorization: Bearer <TRIGGER_TOKEN>` and is disabled
  *                    unless the TRIGGER_TOKEN secret is set.
@@ -64,6 +64,10 @@ function connector(env: Env) {
     };
   };
 }
+
+// GET / is public, read-only and credential-free, so any origin (e.g. the
+// portfolio site) may read it from a browser. /run is never CORS-enabled.
+const PUBLIC_CORS = { "Access-Control-Allow-Origin": "*" };
 
 function timingSafeEqual(a: string, b: string): boolean {
   const ea = new TextEncoder().encode(a);
@@ -124,6 +128,13 @@ export default {
       return Response.json(summary, { status: summary.status === "ok" ? 200 : 502 });
     }
 
+    if (url.pathname === "/" && request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: { ...PUBLIC_CORS, "Access-Control-Allow-Methods": "GET, OPTIONS" },
+      });
+    }
+
     if (url.pathname === "/" && request.method === "GET") {
       try {
         const db = await connector(env)();
@@ -137,12 +148,14 @@ export default {
           const ok = await db.query(
             "SELECT ran_at FROM ingest_runs WHERE status = 'ok' ORDER BY ran_at DESC LIMIT 1"
           );
-          return Response.json(healthBody(res.rows[0] ?? null, ok.rows[0]?.ran_at ?? null));
+          return Response.json(healthBody(res.rows[0] ?? null, ok.rows[0]?.ran_at ?? null), {
+            headers: PUBLIC_CORS,
+          });
         } finally {
           await db.end().catch(() => {});
         }
       } catch (err) {
-        return Response.json({ error: (err as Error).message }, { status: 503 });
+        return Response.json({ error: (err as Error).message }, { status: 503, headers: PUBLIC_CORS });
       }
     }
 

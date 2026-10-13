@@ -10,6 +10,7 @@ import pg from "pg";
 import { deriveEvents, OUTAGE_GAP_MS, type EventObservation } from "../src/events.ts";
 import { parseDurationMinutes, parseNasStatus } from "../src/parser.ts";
 import { healthBody, STALE_AFTER_S } from "../src/health.ts";
+import worker, { type Env } from "../src/index.ts";
 import { loadObservations, refreshEvents, runIngest, type Deps } from "../src/pipeline.ts";
 
 const REPO = join(import.meta.dirname, "..", "..");
@@ -339,4 +340,18 @@ test("health: stale = no run at all in 30 min; failing = runs but none ok", () =
   assert.equal(h(run(60, "error"), ago(STALE_AFTER_S + 1)).failing, true);
   assert.equal(h(run(60, "error"), null).failing, true);
   assert.equal(h(run(60, "error"), null).healthy, false);
+});
+
+test("GET / is readable cross-origin (even when unhealthy); /run is not", async () => {
+  // No DATABASE_URL -> the connector fails before any network I/O -> 503.
+  const env = { DATABASE_URL: "" } as Env;
+  const res = await worker.fetch(new Request("https://w.example/"), env);
+  assert.equal(res.status, 503);
+  assert.equal(res.headers.get("Access-Control-Allow-Origin"), "*");
+  const pre = await worker.fetch(new Request("https://w.example/", { method: "OPTIONS" }), env);
+  assert.equal(pre.status, 204);
+  assert.equal(pre.headers.get("Access-Control-Allow-Origin"), "*");
+  const run = await worker.fetch(new Request("https://w.example/run", { method: "POST" }), env);
+  assert.equal(run.status, 401);
+  assert.equal(run.headers.get("Access-Control-Allow-Origin"), null);
 });
