@@ -39,3 +39,50 @@ jobs:
         run: python -m pytest tests/ -v
         env:
           TEST_DATABASE_URL: postgresql://postgres:dev@127.0.0.1:5432/faa
+
+  # The Cloudflare Worker is the production ingest path; same checks as the
+  # local pre-push gate (scripts/check.sh) minus the Python suite above.
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: dev
+          POSTGRES_DB: faa
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: worker
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 22.18+ runs the .ts tests directly (type stripping); matches local.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Worker tests
+        run: npm test
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:dev@127.0.0.1:5432/faa
+
+      - name: Hermes watchdog scenarios
+        run: bash ../ops/hermes/test_faa_ingest_staleness.sh
