@@ -21,7 +21,19 @@ node scripts/rebuild-events.ts "$DATABASE_URL"   # dry run; --apply to commit
 ```
 
 Parity harness (local Docker only): `test/parity_py.py`, `test/parity_ts.ts`,
-`test/replay_verify.sh`.
+`test/replay_verify.sh`. To run all of it against a fresh production dump
+(production is only read; everything else happens in a throwaway container on
+:55440):
+
+```bash
+DATABASE_URL=<owner url> bash test/replay_prod.sh 300   # from the repo root: worker/test/...
+```
+
+It checks Python vs TS parsing on every stored snapshot and on `edge_cases.py`,
+then replays the last 300 snapshots through both pipelines. Last run 2026-10-14:
+all checks matched (4,985 snapshots, 611 events). The Python events reference
+applies the Worker's 6h outage rule (`outage_segments` in `parity_py.py`),
+because `detect/events.py` predates that rule.
 
 ## Test gate (replaces GitHub Actions CI)
 

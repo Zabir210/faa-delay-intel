@@ -96,11 +96,37 @@ def cmd_events(dsn, out):
         obs = [dict(zip(cols, r)) for r in cur.fetchall()]
         cur.execute("SELECT DISTINCT update_time FROM observations ORDER BY update_time")
         snaps = [r[0] for r in cur.fetchall()]
-    events = derive_events(obs, snaps)
+    events = []
+    for i, (lo, hi) in enumerate(segments := outage_segments(snaps)):
+        seg = derive_events([o for o in obs if lo <= o["update_time"] <= hi],
+                            [t for t in snaps if lo <= t <= hi])
+        if i < len(segments) - 1:
+            for e in seg:  # the outage ends every event open at the gap
+                e["ended_at"] = e["last_seen_at"]
+        events += seg
     for e in events:
         for k in ("started_at", "last_seen_at", "ended_at"):
             e[k] = iso(e[k])
     Path(out).write_text(json.dumps(events, sort_keys=True))
+
+
+OUTAGE_GAP = timedelta(hours=6)  # worker/src/events.ts OUTAGE_GAP_MS
+
+
+def outage_segments(snaps):
+    """(first, last) snapshot of each run of snapshots split at >=6h gaps.
+
+    The Worker closes every open event at such a gap (events.ts outage rule);
+    detect/events.py predates the rule, so the reference applies it here by
+    deriving each segment separately. History has one such gap so far:
+    2026-09-27 22:00Z .. 2026-10-08 13:14Z (the deliberate cron pause).
+    """
+    out, start = [], snaps[0] if snaps else None
+    for a, b in zip(snaps, snaps[1:]):
+        if b - a >= OUTAGE_GAP:
+            out.append((start, a))
+            start = b
+    return out + ([(start, snaps[-1])] if snaps else [])
 
 
 OK_RE = re.compile(r"ok: (\d+) seen, (\d+) new, (\d+) events, (\d+) anomalies")
