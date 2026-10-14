@@ -127,3 +127,21 @@ docker exec -i faa-pg psql -U postgres -d faa < db/schema.sql
 export TEST_DATABASE_URL="postgresql://postgres:dev@127.0.0.1:55432/faa"
 python -m pytest tests/ -v
 ```
+
+---
+
+## Dashboard database access (read-only role)
+
+The Vercel dashboard does not use the owner `DATABASE_URL`. Production's
+`DATABASE_URL` belongs to `dashboard_reader`: it has SELECT on `observations`,
+`delay_events` and `ingest_runs` only, with `default_transaction_read_only=on`
+and `statement_timeout=15s`. To create the role, or rotate its password and push
+the new value to Vercel:
+
+```bash
+.venv/bin/python scripts/neon_reader_role.py --vercel   # owner URL from .env.local
+cd dashboard && vercel redeploy <current production deployment URL> --target production
+```
+
+If the dashboard starts reading another table, add it to `TABLES` in the script
+and rerun it.
