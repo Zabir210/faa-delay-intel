@@ -74,5 +74,7 @@ run_quiet '^FAIL' bash "$TREE/ops/hermes/test_faa_ingest_staleness.sh"
 echo "watchdog scenarios: all ok"
 run_quiet '^FAIL' bash "$TREE/ops/hermes/test_faa_quality_daily.sh"
 echo "quality-daily scenarios: all ok"
+run_quiet '^FAIL' bash "$TREE/ops/hermes/test_faa_ingest_backup_trigger.sh"
+echo "backup-trigger scenarios: all ok"
 
 printf '\ncheck: all suites passed\n'
