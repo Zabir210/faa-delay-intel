@@ -1,4 +1,11 @@
-import { DELAY_TYPES, type DailyActivity, type DelayType } from "@/lib/delay-types";
+import {
+  DELAY_TYPES,
+  MINUTE_TYPES,
+  SPAN_TYPES,
+  type AirportTimeline,
+  type DailyActivity,
+  type DelayType,
+} from "@/lib/delay-types";
 
 import { sql } from "./client";
 
@@ -194,4 +201,142 @@ export async function getHourlyRuns(): Promise<HourlyRuns[]> {
     ORDER BY h.hour
   `;
   return rows.map((r) => ({ hour: r.hour, ok: r.ok, total: r.total }));
+}
+
+export type AirportEvent = {
+  id: number;
+  delayType: string;
+  direction: string | null;
+  reason: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  peakDelayMinutes: number | null;
+  observationCount: number;
+  isAnomaly: boolean;
+  /** to ended_at, or to now while open */
+  durationMinutes: number;
+};
+
+/** Most recent delay events for one airport, open ones first. */
+export async function getAirportEvents(airport: string, limit = 25): Promise<AirportEvent[]> {
+  const rows = await sql`
+    SELECT id, delay_type, direction, reason, started_at, ended_at,
+           peak_delay_minutes, observation_count, is_anomaly,
+           round(extract(epoch FROM COALESCE(ended_at, now()) - started_at) / 60)::int AS duration_minutes
+    FROM delay_events
+    WHERE airport = ${airport.toUpperCase()}
+    ORDER BY (ended_at IS NULL) DESC, started_at DESC
+    LIMIT ${Math.min(Math.max(limit, 1), 100)}
+  `;
+  return rows.map((r) => ({
+    id: Number(r.id),
+    delayType: r.delay_type,
+    direction: r.direction,
+    reason: r.reason,
+    startedAt: r.started_at,
+    endedAt: r.ended_at,
+    peakDelayMinutes: r.peak_delay_minutes,
+    observationCount: r.observation_count,
+    isAnomaly: r.is_anomaly,
+    durationMinutes: r.duration_minutes,
+  }));
+}
+
+export type AirportSummary = {
+  eventCount: number;
+  totalDelayMinutes: number;
+  worst: { minutes: number; delayType: string; startedAt: string } | null;
+  lastEventAt: string | null;
+};
+
+/** 30-day KPIs for one airport, same definitions as the home page's
+ * "Most disrupted" list (sum and max of per-event peak delay). */
+export async function getAirportSummary(airport: string, days: number): Promise<AirportSummary> {
+  const clampedDays = Math.min(Math.max(days, 1), 90);
+  const code = airport.toUpperCase();
+  const [agg] = await sql`
+    SELECT count(*)::int AS event_count,
+           COALESCE(sum(peak_delay_minutes), 0)::int AS total_delay_minutes
+    FROM delay_events
+    WHERE airport = ${code}
+      AND started_at > now() - (${clampedDays} || ' days')::interval
+  `;
+  const [worst] = await sql`
+    SELECT peak_delay_minutes, delay_type, started_at
+    FROM delay_events
+    WHERE airport = ${code} AND peak_delay_minutes IS NOT NULL
+      AND started_at > now() - (${clampedDays} || ' days')::interval
+    ORDER BY peak_delay_minutes DESC, started_at DESC
+    LIMIT 1
+  `;
+  const [last] = await sql`
+    SELECT max(started_at) AS last FROM delay_events WHERE airport = ${code}
+  `;
+  return {
+    eventCount: agg?.event_count ?? 0,
+    totalDelayMinutes: agg?.total_delay_minutes ?? 0,
+    worst: worst
+      ? { minutes: worst.peak_delay_minutes, delayType: worst.delay_type, startedAt: worst.started_at }
+      : null,
+    lastEventAt: last?.last ?? null,
+  };
+}
+
+/** Bucketed observation series for one airport. Minute-bearing types keep
+ * the worst max_delay_minutes per bucket (directions merged); stops and
+ * closures are presence flags. Buckets with no ok ingest run are flagged
+ * offline so an outage never reads as a calm stretch. */
+export async function getAirportTimeline(airport: string, days: number): Promise<AirportTimeline> {
+  const clampedDays = Math.min(Math.max(days, 1), 30);
+  const bucketMinutes = clampedDays <= 7 ? 30 : 120;
+  const rows = await sql`
+    WITH b AS (
+      SELECT generate_series(
+        to_timestamp(floor(extract(epoch FROM now() - (${clampedDays} || ' days')::interval)
+                           / (${bucketMinutes}::int * 60)) * (${bucketMinutes}::int * 60)),
+        now(), (${bucketMinutes} || ' minutes')::interval) AS t
+    ),
+    o AS (
+      SELECT to_timestamp(floor(extract(epoch FROM update_time) / (${bucketMinutes}::int * 60))
+                          * (${bucketMinutes}::int * 60)) AS t,
+             delay_type, max(max_delay_minutes) AS mx
+      FROM observations
+      WHERE airport = ${airport.toUpperCase()}
+        AND update_time > now() - (${clampedDays} || ' days')::interval - (${bucketMinutes} || ' minutes')::interval
+      GROUP BY 1, 2
+    ),
+    r AS (
+      SELECT to_timestamp(floor(extract(epoch FROM ran_at) / (${bucketMinutes}::int * 60))
+                          * (${bucketMinutes}::int * 60)) AS t,
+             count(*) FILTER (WHERE status = 'ok')::int AS ok
+      FROM ingest_runs
+      WHERE ran_at > now() - (${clampedDays} || ' days')::interval - (${bucketMinutes} || ' minutes')::interval
+      GROUP BY 1
+    )
+    SELECT b.t,
+           COALESCE(r.ok, 0) AS ok,
+           COALESCE(json_object_agg(o.delay_type, o.mx) FILTER (WHERE o.delay_type IS NOT NULL), '{}') AS types
+    FROM b
+    LEFT JOIN o ON o.t = b.t
+    LEFT JOIN r ON r.t = b.t
+    GROUP BY b.t, r.ok
+    ORDER BY b.t
+  `;
+  const timeline: AirportTimeline = {
+    buckets: [],
+    bucketMinutes,
+    minutes: { delay: [], ground_delay: [] },
+    active: { ground_stop: [], closure: [] },
+    offline: [],
+  };
+  for (const r of rows) {
+    const types = (r.types ?? {}) as Record<string, number | null>;
+    timeline.buckets.push(new Date(r.t).toISOString());
+    for (const t of MINUTE_TYPES) {
+      timeline.minutes[t].push(t in types ? Number(types[t] ?? 0) : null);
+    }
+    for (const t of SPAN_TYPES) timeline.active[t].push(t in types);
+    timeline.offline.push(r.ok === 0 && Object.keys(types).length === 0);
+  }
+  return timeline;
 }
