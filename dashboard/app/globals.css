@@ -1,20 +1,98 @@
+@import "tailwindcss";
+
+/* Design tokens. Light is the base; dark is its own selected set of steps
+ * (not an inversion), applied for the OS setting unless data-theme="light",
+ * and always for data-theme="dark". Series colors are the validated
+ * categorical slots 1-4 (dataviz reference palette), one per delay type. */
 :root {
-  --background: #0a0a0f;
-  --foreground: #e8e8f0;
-  --card: #14141c;
-  --border: #262632;
-  --muted: #8888a0;
-  --accent: #22d3ee;
-  --danger: #f87171;
-  --warn: #fbbf24;
-  --ok: #4ade80;
+  color-scheme: light;
+  --background: #f6f6f4;
+  --card: #fcfcfb;
+  --card-hover: #f3f3f0;
+  --foreground: #0b0b0b;
+  --secondary: #52514e;
+  --muted: #898781;
+  --border: rgba(11, 11, 11, 0.1);
+  --grid: #e8e7e1;
+  --baseline: #c3c2b7;
+  --accent: #1c5cab;
+  --nodata: #ecebe6;
+  --nodata-ink: #d6d5cd;
+
+  --s-delay: #2a78d6;
+  --s-ground_delay: #eb6834;
+  --s-ground_stop: #1baf7a;
+  --s-closure: #eda100;
+  --bar: #2a78d6;
+
+  --good: #0ca30c;
+  --warning: #fab219;
+  --critical: #d03b3b;
+  --good-ink: #006300;
+  --critical-ink: #b42323;
+
+  /* legacy names still used by the airport page */
+  --ok: var(--good);
+  --warn: var(--warning);
+  --danger: var(--critical);
+
+  --shadow: 0 1px 2px rgba(11, 11, 11, 0.04), 0 4px 16px rgba(11, 11, 11, 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --background: #0d0d0d;
+    --card: #161615;
+    --card-hover: #1e1e1c;
+    --foreground: #ffffff;
+    --secondary: #c3c2b7;
+    --muted: #898781;
+    --border: rgba(255, 255, 255, 0.09);
+    --grid: #262624;
+    --baseline: #383835;
+    --accent: #6da7ec;
+    --nodata: #1f1f1d;
+    --nodata-ink: #2e2e2b;
+    --s-delay: #3987e5;
+    --s-ground_delay: #d95926;
+    --s-ground_stop: #199e70;
+    --s-closure: #c98500;
+    --bar: #3987e5;
+    --good-ink: #0ca30c;
+    --critical-ink: #e66767;
+    --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0d0d0d;
+  --card: #161615;
+  --card-hover: #1e1e1c;
+  --foreground: #ffffff;
+  --secondary: #c3c2b7;
+  --muted: #898781;
+  --border: rgba(255, 255, 255, 0.09);
+  --grid: #262624;
+  --baseline: #383835;
+  --accent: #6da7ec;
+  --nodata: #1f1f1d;
+  --nodata-ink: #2e2e2b;
+  --s-delay: #3987e5;
+  --s-ground_delay: #d95926;
+  --s-ground_stop: #199e70;
+  --s-closure: #c98500;
+  --bar: #3987e5;
+  --good-ink: #0ca30c;
+  --critical-ink: #e66767;
+  --shadow: none;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "SF Mono", Consolas, monospace;
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Consolas, monospace;
 }
 
 * {
@@ -30,16 +108,51 @@ body {
 .card {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
+  box-shadow: var(--shadow);
 }
 
 .mono {
   font-family: var(--font-mono);
 }
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+.text-secondary {
+  color: var(--secondary);
+}
+.text-muted {
+  color: var(--muted);
+}
+.eyebrow {
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--secondary);
+}
+.link {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+.link:hover {
+  text-decoration: underline;
+}
 
 .trend-up {
-  color: var(--danger);
+  color: var(--critical-ink);
 }
 .trend-down {
-  color: var(--ok);
+  color: var(--good-ink);
+}
+
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 45%, transparent); }
+  70% { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.live-dot {
+  animation: pulse-ring 2s ease-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-dot { animation: none; }
 }

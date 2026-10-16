@@ -1,3 +1,5 @@
+import { DELAY_TYPES, type DailyActivity, type DelayType } from "@/lib/delay-types";
+
 import { sql } from "./client";
 
 export type PipelineHealth = {
@@ -130,4 +132,66 @@ export async function getWorstAirports(days: number): Promise<WorstAirport[]> {
     totalDelayMinutes: r.total_delay_minutes,
     maxDelayMinutes: r.max_delay_minutes,
   }));
+}
+
+
+/** Events started per UTC day by type, with that day's run count so a
+ * pipeline outage renders as "no data" instead of a misleading zero. */
+export async function getDailyActivity(days: number): Promise<DailyActivity[]> {
+  const clampedDays = Math.min(Math.max(days, 1), 90);
+  const rows = await sql`
+    WITH d AS (
+      SELECT generate_series(
+        (now() AT TIME ZONE 'UTC')::date - (${clampedDays}::int - 1),
+        (now() AT TIME ZONE 'UTC')::date, interval '1 day')::date AS day
+    ),
+    e AS (
+      SELECT (started_at AT TIME ZONE 'UTC')::date AS day, delay_type, count(*)::int AS n
+      FROM delay_events
+      WHERE started_at >= (now() AT TIME ZONE 'UTC')::date - (${clampedDays}::int - 1)
+      GROUP BY 1, 2
+    ),
+    r AS (
+      SELECT (ran_at AT TIME ZONE 'UTC')::date AS day, count(*)::int AS n
+      FROM ingest_runs
+      WHERE ran_at >= (now() AT TIME ZONE 'UTC')::date - (${clampedDays}::int - 1)
+      GROUP BY 1
+    )
+    SELECT to_char(d.day, 'YYYY-MM-DD') AS day,
+           COALESCE(r.n, 0) AS runs,
+           COALESCE(json_object_agg(e.delay_type, e.n) FILTER (WHERE e.delay_type IS NOT NULL), '{}') AS counts
+    FROM d
+    LEFT JOIN e ON e.day = d.day
+    LEFT JOIN r ON r.day = d.day
+    GROUP BY d.day, r.n
+    ORDER BY d.day
+  `;
+  return rows.map((r) => ({
+    day: r.day,
+    runs: r.runs,
+    counts: Object.fromEntries(
+      DELAY_TYPES.map((t) => [t, Number(r.counts?.[t] ?? 0)])
+    ) as Record<DelayType, number>,
+  }));
+}
+
+export type HourlyRuns = { hour: string; ok: number; total: number };
+
+/** Ingest runs per hour for the last 24 hours (12/hour when healthy). */
+export async function getHourlyRuns(): Promise<HourlyRuns[]> {
+  const rows = await sql`
+    WITH h AS (
+      SELECT generate_series(date_trunc('hour', now()) - interval '23 hours',
+                             date_trunc('hour', now()), interval '1 hour') AS hour
+    )
+    SELECT h.hour,
+           count(r.*) FILTER (WHERE r.status = 'ok')::int AS ok,
+           count(r.*)::int AS total
+    FROM h
+    LEFT JOIN ingest_runs r
+      ON r.ran_at >= h.hour AND r.ran_at < h.hour + interval '1 hour'
+    GROUP BY h.hour
+    ORDER BY h.hour
+  `;
+  return rows.map((r) => ({ hour: r.hour, ok: r.ok, total: r.total }));
 }
